@@ -1,0 +1,30 @@
+services:
+  backend:
+    build: ./backend
+    environment:
+      # Without a key the app runs in demo mode (offline rule-based agent).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      DATAPILOT_PROVIDER: ${DATAPILOT_PROVIDER:-}
+      DATAPILOT_GEMINI_MODEL: ${DATAPILOT_GEMINI_MODEL:-gemini-3.8-flash}
+      DATAPILOT_OLLAMA_BASE_URL: ${DATAPILOT_OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      DATAPILOT_OLLAMA_MODEL: ${DATAPILOT_OLLAMA_MODEL:-qwen3:8b}
+      DATAPILOT_DEMO_MODE: ${DATAPILOT_DEMO_MODE:-}
+      DATAPILOT_MODEL: ${DATAPILOT_MODEL:-claude-opus-5-5}
+      DATAPILOT_EFFORT: ${DATAPILOT_EFFORT:-medium}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # lets the container reach Ollama on the host (Linux)
+    volumes:
+      - datapilot-data:/data
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  datapilot-data:
