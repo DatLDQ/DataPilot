@@ -87,6 +87,8 @@ export interface ChartUI {
     chart_type: ChartType;
     x: string;
     y_keys: string[];
+    x_label?: string | null;
+    y_label?: string | null;
     description: string | null;
     sql: string;
   };

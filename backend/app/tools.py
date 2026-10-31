@@ -1,5 +1,6 @@
 """Tools exposed to the agent, their input validation, and execution."""
 
+import itertools
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -53,7 +54,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "Render a chart for the user from a SQL query. The query must return the x column and the y "
             "column(s). For a grouped/multi-series chart, return long-format rows and set `series` to the "
             "grouping column (use a single y column then). Keep charts focused: at most ~50 categories for "
-            "bar charts. The user sees the chart; you get a short confirmation and a data preview."
+            "bar charts. You get back the chart's placeholder, such as [[chart:1]], and a data preview; put the "
+            "placeholder in your answer where the chart should appear."
         ),
         "eager_input_streaming": True,
         "input_schema": {
@@ -64,7 +66,16 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "sql": {"type": "string"},
                 "x": {"type": "string", "description": "Column for the x axis (or slice label for pie)."},
                 "y": {"type": "array", "items": {"type": "string"}, "description": "Numeric column(s) to plot."},
-                "series": {"type": "string", "description": "Optional column to split into multiple series."},
+                "series": {
+                    "type": "string",
+                    "description": "Optional column to split into multiple series. For pie, one donut per value "
+                    "(e.g. the year), so two periods' shares sit side by side.",
+                },
+                "x_label": {"type": "string", "description": "Short x-axis title, e.g. 'Year' or 'Country'."},
+                "y_label": {
+                    "type": "string",
+                    "description": "What the values measure, with the unit, e.g. 'CO2 emissions (Mt)' or 'Share (%)'.",
+                },
                 "description": {"type": "string", "description": "One-sentence takeaway shown under the chart."},
             },
             "required": ["title", "chart_type", "sql", "x", "y"],
@@ -91,11 +102,13 @@ class CreateChartInput(BaseModel):
     x: str = Field(min_length=1)
     y: list[str] = Field(min_length=1, max_length=8)
     series: str | None = None
+    x_label: str | None = None
+    y_label: str | None = None
     description: str | None = None
 
-    @field_validator("series")
+    @field_validator("series", "x_label", "y_label")
     @classmethod
-    def _blank_series(cls, v: str | None) -> str | None:
+    def _blank(cls, v: str | None) -> str | None:
         return v or None
 
 
@@ -145,6 +158,7 @@ class ToolExecutor:
         self.dataset_id = dataset_id
         self.settings = settings
         self.schema = {t["name"]: {c["name"]: c["type"] for c in t["columns"]} for t in profile["tables"]}
+        self._chart_ids = itertools.count(1)  # next() is atomic, and tools of one step run in parallel threads
 
     def execute(self, name: str, raw_input: Any) -> ToolOutcome:
         model = INPUT_MODELS.get(name)
@@ -251,17 +265,21 @@ class ToolExecutor:
             "chart_type": args.chart_type,
             "x": args.x,
             "y_keys": y_keys,
+            "x_label": args.x_label,
+            "y_label": args.y_label,
             "description": args.description,
             "sql": args.sql,
         }
         note = " (truncated to the first rows)" if result.truncated else ""
         preview = format_preview(result, 15)
+        chart_id = next(self._chart_ids)
         return ToolOutcome(
             content=(
-                f"Chart '{args.title}' rendered for the user with {len(data)} points{note}.\n"
+                f"Chart '{args.title}' created with {len(data)} points{note}. To show it, put [[chart:{chart_id}]] "
+                f"on its own line in your final answer, right after the point it supports.\n"
                 f"Data preview:\n{preview}"
             ),
-            ui={"spec": spec, "data": data, "truncated": result.truncated},
+            ui={"chart_id": chart_id, "spec": spec, "data": data, "truncated": result.truncated},
             summary=f"{args.chart_type} chart, {len(data)} points",
         )
 

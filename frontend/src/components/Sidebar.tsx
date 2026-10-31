@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { Database, FileSpreadsheet, MessageSquare, Plus, Sparkles, Trash2, Upload } from "lucide-react";
+import { FileSpreadsheet, MessageSquare, Plus, Trash2, Upload } from "lucide-react";
 import { useRef, useState, type DragEvent } from "react";
 import type { Conversation, DatasetSummary } from "../api/types";
 import { Spinner } from "./ui";
@@ -18,7 +18,6 @@ interface Props {
   onDeleteDataset: (id: string) => void;
   onDeleteConversation: (id: string) => void;
   onUpload: (file: File) => void;
-  onLoadSample: () => void;
 }
 
 export function Logo() {
@@ -75,16 +74,6 @@ export function Sidebar(p: Props) {
         >
           {p.busy ? <Spinner className="size-4" /> : <Upload className="size-4" />}
           Upload
-        </button>
-        <button
-          type="button"
-          disabled={p.busy}
-          onClick={p.onLoadSample}
-          title="Load a sample e-commerce dataset"
-          className="flex items-center justify-center gap-1.5 rounded-lg border border-line-strong px-2.5 py-2 text-sm text-ink-2 hover:bg-surface-2 hover:text-ink disabled:opacity-50"
-        >
-          <Sparkles className="size-4" />
-          Sample
         </button>
         <input
           ref={fileInput}
@@ -146,10 +135,6 @@ export function Sidebar(p: Props) {
           </>
         )}
       </nav>
-
-      <div className="flex items-center gap-1.5 border-t border-line px-4 py-2.5 text-[11px] text-muted">
-        <Database className="size-3.5" /> DuckDB · read-only sandbox
-      </div>
     </aside>
   );
 }

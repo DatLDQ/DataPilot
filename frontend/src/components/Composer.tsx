@@ -69,7 +69,7 @@ export function Composer({ running, disabled, onSend, onStop }: Props) {
         )}
       </div>
       <p className="mt-1.5 text-center text-[11px] text-muted">
-        Every number comes from a read-only SQL query you can inspect. Enter to send · Shift+Enter for a new line
+        Enter to send · Shift+Enter for a new line
       </p>
     </div>
   );

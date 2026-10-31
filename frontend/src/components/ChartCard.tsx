@@ -1,5 +1,6 @@
-import { BarChart3, Code2, Download, Table2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import clsx from "clsx";
+import { BarChart3, Download, Table2 } from "lucide-react";
+import { useId, useMemo, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -17,17 +18,19 @@ import {
   Tooltip,
   XAxis,
   YAxis,
+  type PieLabelRenderProps,
   type TooltipContentProps,
   type TooltipValueType,
 } from "recharts";
 import type { Cell, ChartUI } from "../api/types";
 import { dateLabeler, downloadCSV, formatCell, formatCompact } from "../lib/format";
 import { CHART, OTHER, SERIES, seriesColor } from "../lib/palette";
+import { niceScale, type NiceScale } from "../lib/axis";
+import { pieRings, type Ring } from "../lib/pie";
 import { DataTable } from "./DataTable";
 import { IconButton } from "./ui";
 
 const AXIS_TICK = { fill: CHART.muted, fontSize: 11 };
-const MAX_PIE_SLICES = 8;
 
 function ChartTooltip({ active, payload, label }: TooltipContentProps<TooltipValueType, string | number>) {
   if (!active || !payload?.length) return null;
@@ -45,13 +48,13 @@ function ChartTooltip({ active, payload, label }: TooltipContentProps<TooltipVal
   );
 }
 
-function Legend({ keys }: { keys: string[] }) {
+function Legend({ keys, color }: { keys: string[]; color: (key: string, i: number) => string }) {
   if (keys.length < 2) return null;
   return (
     <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-2">
       {keys.map((k, i) => (
         <span key={k} className="flex items-center gap-1.5">
-          <span className="size-2.5 rounded-sm" style={{ background: seriesColor(k, i) }} />
+          <span className="size-2.5 rounded-sm" style={{ background: color(k, i) }} />
           {k}
         </span>
       ))}
@@ -59,33 +62,45 @@ function Legend({ keys }: { keys: string[] }) {
   );
 }
 
-function pieData(data: Record<string, Cell>[], x: string, y: string) {
-  const sorted = [...data].sort((a, b) => Number(b[y] ?? 0) - Number(a[y] ?? 0));
-  if (sorted.length <= MAX_PIE_SLICES) return sorted.map((d) => ({ name: String(d[x]), value: Number(d[y] ?? 0) }));
-  const head = sorted.slice(0, MAX_PIE_SLICES - 1).map((d) => ({ name: String(d[x]), value: Number(d[y] ?? 0) }));
-  const rest = sorted.slice(MAX_PIE_SLICES - 1).reduce((s, d) => s + Number(d[y] ?? 0), 0);
-  return [...head, { name: "Other", value: rest }];
+/** Arrowhead for the axis lines, so each axis reads as pointing towards larger values. */
+function ArrowDefs({ id }: { id: string }) {
+  return (
+    <defs>
+      <marker id={id} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+        <path d="M0,1 L10,5 L0,9 z" fill={CHART.axisStrong} />
+      </marker>
+    </defs>
+  );
 }
 
-function ChartBody({ ui }: { ui: ChartUI }) {
+function ChartBody({ ui, arrowId }: { ui: ChartUI; arrowId: string }) {
   const { spec } = ui;
   const labelX = dateLabeler(ui.data.map((d) => d[spec.x]));
   const data = labelX ? ui.data.map((d) => ({ ...d, [spec.x]: labelX(d[spec.x]) })) : ui.data;
   const keys = spec.y_keys;
   const grid = <CartesianGrid stroke={CHART.grid} vertical={false} />;
-  const xAxis = (
-    <XAxis dataKey={spec.x} tick={AXIS_TICK} tickLine={false} axisLine={{ stroke: CHART.axis }} minTickGap={16} />
-  );
-  const yAxis = <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} tickFormatter={formatCompact} width={48} />;
+  // Recharts draws the x axis left to right and the y axis top to bottom, so the arrows go on the
+  // x line's end and the y line's start.
+  const xLine = { stroke: CHART.axisStrong, markerEnd: `url(#${arrowId})` };
+  const yLine = { stroke: CHART.axisStrong, markerStart: `url(#${arrowId})` };
+  const defs = <ArrowDefs id={arrowId} />;
+  const xAxis = <XAxis dataKey={spec.x} tick={AXIS_TICK} tickLine={false} axisLine={xLine} minTickGap={16} />;
+  // Value axes run on round, evenly spaced ticks. Bars and areas are read against zero; a line is read by
+  // its shape, so its axis hugs the data.
+  const values = data.flatMap((d) => keys.map((k) => d[k]));
+  const scale = (s: NiceScale | null) => (s ? { domain: s.domain, ticks: s.ticks, interval: 0 as const } : {});
+  const valueScale = scale(niceScale(values, { zero: spec.chart_type !== "line" && spec.chart_type !== "scatter" }));
+  const yAxis = <YAxis tick={AXIS_TICK} tickLine={false} axisLine={yLine} tickFormatter={formatCompact} width={52} {...valueScale} />;
   const tooltip = (cursor: object | boolean = { stroke: CHART.axis }) => (
     <Tooltip content={ChartTooltip} cursor={cursor} isAnimationActive={false} />
   );
-  const margin = { top: 8, right: 12, left: 0, bottom: 0 };
+  const margin = { top: 14, right: 18, left: 0, bottom: 0 };
 
   switch (spec.chart_type) {
     case "bar":
       return (
         <BarChart data={data} margin={margin} barGap={2} barCategoryGap="20%">
+          {defs}
           {grid}
           {xAxis}
           {yAxis}
@@ -98,16 +113,10 @@ function ChartBody({ ui }: { ui: ChartUI }) {
     case "horizontal_bar":
       return (
         <BarChart data={data} layout="vertical" margin={margin} barGap={2} barCategoryGap="20%">
+          {defs}
           <CartesianGrid stroke={CHART.grid} horizontal={false} />
-          <XAxis type="number" tick={AXIS_TICK} tickLine={false} axisLine={false} tickFormatter={formatCompact} />
-          <YAxis
-            type="category"
-            dataKey={spec.x}
-            tick={AXIS_TICK}
-            tickLine={false}
-            axisLine={{ stroke: CHART.axis }}
-            width={120}
-          />
+          <XAxis type="number" tick={AXIS_TICK} tickLine={false} axisLine={xLine} tickFormatter={formatCompact} {...valueScale} />
+          <YAxis type="category" dataKey={spec.x} tick={AXIS_TICK} tickLine={false} axisLine={yLine} width={120} />
           {tooltip({ fill: "rgba(255,255,255,0.04)" })}
           {keys.map((k, i) => (
             <Bar key={k} dataKey={k} name={k} fill={seriesColor(k, i)} maxBarSize={24} radius={[0, 4, 4, 0]} />
@@ -117,6 +126,7 @@ function ChartBody({ ui }: { ui: ChartUI }) {
     case "line":
       return (
         <LineChart data={data} margin={margin}>
+          {defs}
           {grid}
           {xAxis}
           {yAxis}
@@ -141,6 +151,7 @@ function ChartBody({ ui }: { ui: ChartUI }) {
     case "area":
       return (
         <AreaChart data={data} margin={margin}>
+          {defs}
           {grid}
           {xAxis}
           {yAxis}
@@ -164,6 +175,7 @@ function ChartBody({ ui }: { ui: ChartUI }) {
     case "scatter":
       return (
         <ScatterChart margin={margin}>
+          {defs}
           <CartesianGrid stroke={CHART.grid} />
           <XAxis
             dataKey={spec.x}
@@ -171,9 +183,9 @@ function ChartBody({ ui }: { ui: ChartUI }) {
             name={spec.x}
             tick={AXIS_TICK}
             tickLine={false}
-            axisLine={{ stroke: CHART.axis }}
+            axisLine={xLine}
             tickFormatter={formatCompact}
-            domain={["auto", "auto"]}
+            {...scale(niceScale(data.map((d) => d[spec.x])))}
           />
           <YAxis
             dataKey={keys[0]}
@@ -181,47 +193,110 @@ function ChartBody({ ui }: { ui: ChartUI }) {
             name={keys[0]}
             tick={AXIS_TICK}
             tickLine={false}
-            axisLine={false}
+            axisLine={yLine}
             tickFormatter={formatCompact}
-            width={48}
-            domain={["auto", "auto"]}
+            width={52}
+            {...valueScale}
           />
           {tooltip({ strokeDasharray: "0", stroke: CHART.axis })}
           <Scatter data={data} name={keys[0]} fill={SERIES[0]} stroke={CHART.surface} strokeWidth={2} />
         </ScatterChart>
       );
-    case "pie": {
-      const slices = pieData(data, spec.x, keys[0]);
-      return (
-        <PieChart>
-          <Tooltip content={ChartTooltip} isAnimationActive={false} />
-          <Pie
-            data={slices}
-            dataKey="value"
-            nameKey="name"
-            innerRadius="55%"
-            outerRadius="85%"
-            stroke={CHART.surface}
-            strokeWidth={2}
-            isAnimationActive={false}
-          >
-            {slices.map((s, i) => (
-              <PieCell key={s.name} fill={s.name === "Other" ? OTHER : SERIES[i % SERIES.length]} />
-            ))}
-          </Pie>
-        </PieChart>
-      );
-    }
+    case "pie":
+      return null; // drawn by PieRings
   }
 }
 
+const sliceColor = (name: string, i: number) => (name === "Other" ? OTHER : SERIES[i % SERIES.length]);
+
+/** Percent labels inside the ring; slivers stay unlabeled and keep their tooltip. */
+function percentLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent }: PieLabelRenderProps) {
+  if (!percent || percent < 0.04) return null;
+  const r = (Number(innerRadius) + Number(outerRadius)) / 2;
+  const a = (-Number(midAngle) * Math.PI) / 180;
+  return (
+    <text
+      x={Number(cx) + r * Math.cos(a)}
+      y={Number(cy) + r * Math.sin(a)}
+      fill="#fff"
+      fontSize={11}
+      fontWeight={500}
+      textAnchor="middle"
+      dominantBaseline="central"
+    >
+      {`${Math.round(percent * 100)}%`}
+    </text>
+  );
+}
+
+function PieTooltip({ active, payload }: TooltipContentProps<TooltipValueType, string | number>, total: number) {
+  if (!active || !payload?.length) return null;
+  const p = payload[0];
+  const value = Number(p.value ?? 0);
+  return (
+    <div className="rounded-lg border border-line-strong bg-surface-2 px-3 py-2 text-xs shadow-xl">
+      <div className="flex items-center gap-2">
+        <span className="size-2 rounded-full" style={{ background: p.payload?.fill as string }} />
+        <span className="text-ink-2">{p.name}</span>
+        <span className="tabular ml-auto pl-4 font-medium text-ink">{formatCell(value)}</span>
+      </div>
+      {total > 0 && <div className="mt-0.5 text-right text-muted tabular">{((value / total) * 100).toFixed(1)}%</div>}
+    </div>
+  );
+}
+
+/** One donut per period (or value column) side by side, so a change in the mix is easy to see. */
+function PieRings({ rings, label }: { rings: Ring[]; label: string | null }) {
+  const many = rings.length > 1;
+  return (
+    <div className={clsx("grid gap-4", many && (rings.length === 2 ? "sm:grid-cols-2" : "sm:grid-cols-3"))}>
+      {rings.map((ring) => {
+        const total = ring.slices.reduce((s, x) => s + x.value, 0);
+        return (
+          <div key={ring.key} className="relative h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Tooltip content={(props) => PieTooltip(props, total)} isAnimationActive={false} />
+                <Pie
+                  data={ring.slices}
+                  dataKey="value"
+                  nameKey="name"
+                  innerRadius="52%"
+                  outerRadius="88%"
+                  stroke={CHART.surface}
+                  strokeWidth={2}
+                  label={percentLabel}
+                  labelLine={false}
+                  isAnimationActive={false}
+                >
+                  {ring.slices.map((s, i) => (
+                    <PieCell key={s.name} fill={sliceColor(s.name, i)} />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+              {many && <span className="text-base font-semibold text-ink">{ring.key}</span>}
+              {label && <span className="max-w-24 text-[11px] leading-tight text-muted">{label}</span>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function ChartCard({ ui }: { ui: ChartUI }) {
-  const [view, setView] = useState<"chart" | "table" | "sql">("chart");
+  const [view, setView] = useState<"chart" | "table">("chart");
+  const arrowId = `arrow${useId().replace(/[^a-zA-Z0-9]/g, "")}`;
   const { spec, data } = ui;
   const columns = useMemo(() => [spec.x, ...spec.y_keys], [spec]);
   const rows = useMemo(() => data.map((d) => columns.map((c) => d[c] ?? null)), [data, columns]);
-  const legendKeys =
-    spec.chart_type === "pie" ? pieData(data, spec.x, spec.y_keys[0]).map((s) => s.name) : spec.y_keys;
+  const pie = useMemo(() => (spec.chart_type === "pie" ? pieRings(data, spec.x, spec.y_keys) : null), [spec, data]);
+  // Each axis is titled at its far end: the value axis above its arrow, the x axis after its arrow.
+  const valueLabel = spec.y_label || null;
+  const xLabel = spec.x_label || spec.x;
+  const [topLabel, endLabel] = spec.chart_type === "horizontal_bar" ? [xLabel, valueLabel] : [valueLabel, xLabel];
 
   return (
     <figure className="overflow-hidden rounded-xl border border-line bg-surface">
@@ -237,31 +312,31 @@ export function ChartCard({ ui }: { ui: ChartUI }) {
           <IconButton label="Table view" active={view === "table"} onClick={() => setView("table")}>
             <Table2 className="size-4" />
           </IconButton>
-          <IconButton label="SQL" active={view === "sql"} onClick={() => setView("sql")}>
-            <Code2 className="size-4" />
-          </IconButton>
           <IconButton label="Download CSV" onClick={() => downloadCSV(spec.title, columns, rows)}>
             <Download className="size-4" />
           </IconButton>
         </div>
       </div>
       <div className="px-4 pt-3 pb-4">
-        {view === "chart" && (
-          <>
-            <Legend keys={legendKeys} />
-            <div className="h-72 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                {ChartBody({ ui })}
-              </ResponsiveContainer>
-            </div>
-          </>
-        )}
+        {view === "chart" &&
+          (pie ? (
+            <>
+              <Legend keys={pie.categories} color={sliceColor} />
+              <PieRings rings={pie.rings} label={valueLabel} />
+            </>
+          ) : (
+            <>
+              <Legend keys={spec.y_keys} color={seriesColor} />
+              {topLabel && <div className="mb-0.5 text-[11px] font-medium text-muted">{topLabel}</div>}
+              <div className="h-72 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  {ChartBody({ ui, arrowId })}
+                </ResponsiveContainer>
+              </div>
+              {endLabel && <div className="mt-0.5 text-right text-[11px] font-medium text-muted">{endLabel}</div>}
+            </>
+          ))}
         {view === "table" && <DataTable columns={columns} rows={rows} maxHeight={288} />}
-        {view === "sql" && (
-          <pre className="max-h-72 overflow-auto rounded-lg border border-line bg-surface-2 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap text-ink-2">
-            {spec.sql}
-          </pre>
-        )}
         {ui.truncated && <p className="mt-2 text-xs text-muted">Showing the first {data.length} points.</p>}
       </div>
     </figure>

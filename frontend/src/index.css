@@ -132,10 +132,6 @@ body {
   color: var(--color-ink-2);
   font-weight: 600;
 }
-.md.narration {
-  color: var(--color-ink-2);
-  font-size: 0.875rem;
-}
 
 @keyframes caret-blink {
   50% {

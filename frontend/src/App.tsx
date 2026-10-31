@@ -1,4 +1,4 @@
-import { AlertTriangle, FlaskConical, PanelRightOpen, X } from "lucide-react";
+import { AlertTriangle, FlaskConical, X } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -14,10 +14,8 @@ import type {
   Health,
 } from "./api/types";
 import { Composer } from "./components/Composer";
-import { SchemaPanel } from "./components/SchemaPanel";
 import { ACCEPT, Sidebar } from "./components/Sidebar";
 import { TurnView } from "./components/TurnView";
-import { IconButton } from "./components/ui";
 import { NoDataset, Suggestions } from "./components/Welcome";
 import {
   newTurn,
@@ -41,7 +39,6 @@ export default function App() {
   const [running, setRunning] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
-  const [showSchema, setShowSchema] = useState(true);
 
   const abortRef = useRef<AbortController | null>(null);
   const runIdRef = useRef(0);
@@ -139,17 +136,6 @@ export default function App() {
     setUploading(true);
     try {
       await afterCreate(await api.uploadDataset(file));
-    } catch (e) {
-      fail(e);
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const loadSample = async () => {
-    setUploading(true);
-    try {
-      await afterCreate(await api.loadSample());
     } catch (e) {
       fail(e);
     } finally {
@@ -285,7 +271,6 @@ export default function App() {
         onDeleteDataset={(id) => void deleteDataset(id)}
         onDeleteConversation={(id) => void deleteConversation(id)}
         onUpload={(f) => void upload(f)}
-        onLoadSample={() => void loadSample()}
       />
 
       <main className="relative flex min-w-0 flex-1 flex-col">
@@ -306,19 +291,6 @@ export default function App() {
               <span className="rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">
                 Demo
               </span>
-            )}
-            {health && (
-              <span className="hidden text-xs text-muted sm:inline">
-                {health.model}
-              </span>
-            )}
-            {dataset && !showSchema && (
-              <IconButton
-                label="Show schema"
-                onClick={() => setShowSchema(true)}
-              >
-                <PanelRightOpen className="size-4" />
-              </IconButton>
             )}
           </div>
         </header>
@@ -359,7 +331,6 @@ export default function App() {
             <NoDataset
               busy={uploading}
               onUpload={() => fileInput.current?.click()}
-              onSample={() => void loadSample()}
             />
           ) : turns.length === 0 ? (
             <Suggestions
@@ -401,10 +372,6 @@ export default function App() {
           </div>
         )}
       </main>
-
-      {dataset && showSchema && (
-        <SchemaPanel dataset={dataset} onClose={() => setShowSchema(false)} />
-      )}
 
       <input
         ref={fileInput}

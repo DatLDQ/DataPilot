@@ -1,6 +1,6 @@
 import type { Cell } from "../api/types";
 
-const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
+const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 2 });
 const plain = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
 
 export function formatCompact(v: unknown): string {

@@ -1,102 +1,56 @@
 import clsx from "clsx";
-import { AlertTriangle, Brain, ChevronRight, Clock, Coins, Cpu, Layers } from "lucide-react";
-import { memo, useState } from "react";
+import { AlertTriangle } from "lucide-react";
+import { memo, useMemo } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { formatCost, formatMs, formatTokens } from "../lib/format";
+import type { ChartUI } from "../api/types";
+import { layoutAnswer } from "../lib/answer";
 import { toolSteps, type Block, type TurnState } from "../state/runReducer";
-import { ToolCard } from "./ToolCard";
+import { ChartCard } from "./ChartCard";
 import { Spinner } from "./ui";
 
-const MarkdownText = memo(function MarkdownText({ text, narration }: { text: string; narration?: boolean }) {
+type ToolBlock = Extract<Block, { kind: "tool" }>;
+
+const MarkdownText = memo(function MarkdownText({ text }: { text: string }) {
   return (
-    <div className={clsx("md", narration && "narration")}>
+    <div className="md">
       <Markdown remarkPlugins={[remarkGfm]}>{text}</Markdown>
     </div>
   );
 });
 
-function ThinkingBlock({ text, live }: { text: string; live: boolean }) {
-  const [open, setOpen] = useState(false);
-  const preview = text.trim().split("\n")[0]?.slice(0, 140);
-  return (
-    <div className="rounded-xl border border-line/70 bg-surface/50">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left"
-        aria-expanded={open}
-      >
-        <ChevronRight className={clsx("size-4 shrink-0 text-muted transition-transform", open && "rotate-90")} />
-        <Brain className={clsx("size-4 shrink-0", live ? "animate-pulse text-accent" : "text-muted")} />
-        <span className="shrink-0 text-sm text-ink-2">{live ? "Thinking" : "Thought process"}</span>
-        {!open && preview && <span className="min-w-0 flex-1 truncate text-xs text-muted italic">{preview}</span>}
-      </button>
-      {open && (
-        <div className="border-t border-line/70 px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-muted">
-          {text || "…"}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function StatsFooter({ turn }: { turn: TurnState }) {
-  const s = turn.stats;
-  if (!s) return null;
-  const u = s.usage;
-  return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-1 text-xs text-muted">
-      {turn.model && (
-        <span className="flex items-center gap-1">
-          <Cpu className="size-3.5" /> {turn.model}
-        </span>
-      )}
-      <span className="flex items-center gap-1">
-        <Layers className="size-3.5" /> {s.steps} {s.steps === 1 ? "step" : "steps"}
-      </span>
-      {s.elapsedMs > 0 && (
-        <span className="flex items-center gap-1">
-          <Clock className="size-3.5" /> {formatMs(s.elapsedMs)}
-        </span>
-      )}
-      {u && (
-        <span className="tabular" title="input / output / cache-read tokens">
-          {formatTokens(u.input_tokens)} in · {formatTokens(u.output_tokens)} out
-          {u.cache_read_input_tokens > 0 && ` · ${formatTokens(u.cache_read_input_tokens)} cached`}
-        </span>
-      )}
-      {u && (
-        <span className="flex items-center gap-1" title="Estimated cost">
-          <Coins className="size-3.5" /> {formatCost(u.cost_usd)}
-        </span>
-      )}
-    </div>
-  );
-}
-
-function BlockView({ block, turn, isLast, narrationSteps }: {
-  block: Block;
-  turn: TurnState;
-  isLast: boolean;
-  narrationSteps: Set<number>;
-}) {
-  const live = turn.status === "streaming" && isLast;
-  if (block.kind === "thinking") return <ThinkingBlock text={block.text} live={live} />;
-  if (block.kind === "tool") return <ToolCard block={block} />;
-  if (!block.text.trim()) return live ? <span className="caret" /> : null;
-  return (
-    <div className={clsx(live && "streaming-text")}>
-      <MarkdownText text={block.text} narration={narrationSteps.has(block.step)} />
-    </div>
-  );
+/** One line saying what the agent is doing, in place of its thinking and tool calls. */
+function activity(tool: ToolBlock | undefined): string {
+  if (!tool) return "Thinking…";
+  if (tool.name === "create_chart") return "Drawing a chart…";
+  if (tool.name === "profile_column") return "Looking at the data…";
+  return "Analyzing the data…";
 }
 
 export function TurnView({ turn }: { turn: TurnState }) {
-  const narrationSteps = toolSteps(turn);
   const streaming = turn.status === "streaming";
-  const lastBlock = turn.blocks[turn.blocks.length - 1];
-  const waiting = streaming && (!lastBlock || (lastBlock.kind === "tool" && lastBlock.status !== "drafting"));
+
+  const parts = useMemo(() => {
+    const charts = new Map<number, ChartUI>();
+    let order = 0;
+    for (const b of turn.blocks) {
+      if (b.kind === "tool" && b.name === "create_chart" && b.status === "done" && b.ui) {
+        order += 1;
+        const ui = b.ui as unknown as ChartUI & { chart_id?: number };
+        charts.set(ui.chart_id ?? order, ui);
+      }
+    }
+    // Text written alongside tool calls is the agent narrating its work; the answer is the rest.
+    const narration = toolSteps(turn);
+    const texts = turn.blocks.filter((b): b is Extract<Block, { kind: "text" }> => b.kind === "text");
+    let answer = texts.filter((b) => !narration.has(b.step)).map((b) => b.text).join("\n\n");
+    // A run that stopped before its final step still shows whatever it managed to say.
+    if (!answer.trim() && !streaming) answer = texts.map((b) => b.text).join("\n\n");
+    return layoutAnswer(answer, charts, streaming);
+  }, [turn, streaming]);
+
+  const lastTool = [...turn.blocks].reverse().find((b): b is ToolBlock => b.kind === "tool");
+  const answering = parts.some((p) => p.kind === "text");
 
   return (
     <section className="space-y-3">
@@ -106,22 +60,23 @@ export function TurnView({ turn }: { turn: TurnState }) {
         </div>
       </div>
 
-      <div className="space-y-2.5">
-        {turn.blocks.map((b, i) => (
-          <BlockView
-            key={b.key}
-            block={b}
-            turn={turn}
-            isLast={i === turn.blocks.length - 1}
-            narrationSteps={narrationSteps}
-          />
-        ))}
-        {waiting && (
+      <div className="space-y-4">
+        {parts.map((p, i) =>
+          p.kind === "chart" ? (
+            <ChartCard key={`chart-${p.id}`} ui={p.ui} />
+          ) : (
+            <div key={i} className={clsx(streaming && i === parts.length - 1 && "streaming-text")}>
+              <MarkdownText text={p.text} />
+            </div>
+          ),
+        )}
+        {streaming && !answering && (
           <div className="flex items-center gap-2 px-1 text-sm text-muted">
             <Spinner className="size-4" />
-            {lastBlock ? "Reading results…" : "Starting analysis…"}
+            {activity(lastTool)}
           </div>
         )}
+        {turn.status === "stopped" && !answering && <p className="px-1 text-sm text-muted">Stopped.</p>}
         {turn.errors.map((e, i) => (
           <div
             key={i}
@@ -132,7 +87,6 @@ export function TurnView({ turn }: { turn: TurnState }) {
             <span>{e}</span>
           </div>
         ))}
-        {!streaming && <StatsFooter turn={turn} />}
       </div>
     </section>
   );

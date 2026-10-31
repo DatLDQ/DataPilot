@@ -52,11 +52,21 @@ def test_create_chart_simple(executor):
     out = executor.execute("create_chart", {
         "title": "Revenue by channel", "chart_type": "bar",
         "sql": "SELECT channel, sum(revenue) AS revenue FROM ecommerce_sales GROUP BY 1 ORDER BY 2 DESC",
-        "x": "channel", "y": ["revenue"],
+        "x": "channel", "y": ["revenue"], "x_label": "Channel", "y_label": "Revenue (USD)",
     })
     assert not out.is_error, out.content
-    assert out.ui["spec"]["y_keys"] == ["revenue"]
+    spec = out.ui["spec"]
+    assert spec["y_keys"] == ["revenue"] and (spec["x_label"], spec["y_label"]) == ("Channel", "Revenue (USD)")
     assert len(out.ui["data"]) == 5 and set(out.ui["data"][0]) == {"channel", "revenue"}
+    # Each chart gets the next placeholder, which the answer uses to place it.
+    assert out.ui["chart_id"] == 1 and "[[chart:1]]" in out.content
+    again = executor.execute("create_chart", {
+        "title": "Orders by channel", "chart_type": "pie",
+        "sql": "SELECT channel, count(*) AS orders FROM ecommerce_sales GROUP BY 1",
+        "x": "channel", "y": ["orders"], "y_label": " ",
+    })
+    assert again.ui["chart_id"] == 2 and "[[chart:2]]" in again.content
+    assert again.ui["spec"]["x_label"] is None
 
 
 def test_create_chart_pivots_series(executor):
